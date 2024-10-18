@@ -69,6 +69,8 @@ As this was already optional, restoring it in a later version of Ion would be st
 While tagged parameters can always accept an arbitrary number of expressions via the `(:values ...)` macro,
 parameters using a tagless encoding do not have that option.
 Without an opcode (a 'tag'), primitive encodings like `uint8` would not have a way to encode a macro invocation.
+In order to offer densely packed streams of a given tagless encoding (e.g. one thousand `float16`s),
+Ion needed a way to indicate that a given parameter would actually be a series of expressions instead of a single expression.
 
 #### Grouped expressions
 
@@ -213,9 +215,44 @@ This enabled macro authors to rename macros or create shorter bindings for macro
 In practice, we found that this feature introduced quite a bit of complexity; it has been removed.
 
 Macros exported from a module in scope must be referred to using qualified `module_name::macro_name` syntax.
-Macros can still be aliased on export, just not within the module definition.
+Macros can still be aliased [on export](modules/defining_modules.md#export), just not within the module definition.
 
-### Tunneled modules removed
+### `import`/`load`/`use`
+
+Earlier spec versions included a `load` operation, which made a shared module available,
+and a `use` operation, which copied all of the target module's macros into the caller's scope so they could be referred to unqualified.
+As a convenience, a third operation, `import` was provided that did both the `load` and `use` steps.
+
+We have simplified this to a single operation, `import`, which creates a local binding to a shared module.
+As mentioned in [Intra-module aliasing](#intra-module-aliasing),
+macros in an imported module must be referred to using qualified syntax within the body of the module but can be aliased on export.
+
+### Tunneled modules
+
+'Tunneled modules' was a proposal to specify a serialization for Ion 1.1 modules using Ion 1.0's shared symbol table syntax,
+taking advantage of symbol table's open content rules.
+Its aim was to allow Ion 1.0 clients and Ion 1.1 clients to both use the same module definition;
+the Ion 1.0 clients would simply not benefit from the macro definitions.
+
+```bnf
+shared-symtab ::= $ion_shared_symbol_table::{
+                      name : <catalog-name>,
+                      version : <catalog-version>,
+                      symbols : [ <string*> ]
+                      module : <tunneled-module-def>
+                  }
+
+tunneled-module-def  ::= ion-version-marker ::( tunneled-module-body )
+
+tunneled-module-body ::= dependency* macro-alias* module-mactab
+```
+
+The concrete value proposition of this is unclear.
+It might benefit the small percentage of Ion users who currently use shared symbol tables and who would also go on to use shared modules.
+However, the encoding of shared symbol tables is not prescribed in the 1.0 spec; it is offered as an example,
+[leaving it to higher-level specifications or conventions to define how shared symbol tables are communicated](https://amazon-ion.github.io/ion-docs/docs/symbols.html#shared-symbol-tables).
+
+Given the nebulous benefit of including this in the specification as a requirement, the team considered this to be below the line.
 
 ## Encoding
 
