@@ -1,6 +1,7 @@
 # Ion 1.1
 
 - [Introduction](./introduction.md)
+- [Changes since 2023-08](recent_changes.md)
 - [What's new](./whats_new.md)
 - [Macros](macros.md)
     - [Defining macros](macros/defining_macros.md) 

@@ -1,0 +1,215 @@
+# Changes since 2023-08
+
+This document summarizes the changes made to the specification in the past year.
+
+## Macros
+
+### Types
+
+In earlier versions of the specification, macros were able to constrain the Ion types of their parameters and expansions.
+The set of supported types was as follows:
+```bnf
+any-type       ::= tagged-type | tagless-type
+
+tagged-type    ::= abstract-type | concrete-type
+
+tagless-type   ::= primitive-type | macro-ref
+
+concrete-type  ::= 'null' | bool   | timestamp | int  | decimal | float
+                          | string | symbol    | blob | clob    | list
+                          | sexp   | struct
+
+abstract-type  ::= any | number | exact | text | lob | sequence
+
+primitive-type ::= flex_symbol | flex_string | flex_int | flex_uint | uint8
+                               | uint16      | uint32   | uint64    | int8
+                               | int16       | int32    | int64     | float16
+                               | float32     | float64
+```
+
+Specifying a tagged type other than `any` was optional as the encoding would be unchanged;
+on the wire, a `string` would be encoded the same way a `number` would be: with a leading opcode.
+
+This set of types has been pared back to only include those types that affect the wire encoding of parameters:
+```bnf
+any-type       ::= tagged-type | tagless-type
+
+tagged-type    ::= any
+
+tagless-type   ::= primitive-type | macro-ref
+
+primitive-type ::= flex_symbol | flex_string | flex_int | flex_uint | uint8
+                               | uint16      | uint32   | uint64    | int8
+                               | int16       | int32    | int64     | float16
+                               | float32     | float64
+```
+We now refer to these types as 'encodings' to highlight this distinction.
+
+This set of types could be easily restored or expanded in a later version of Ion using existing syntax.
+
+### Result specifications
+
+Previously, macros could optionally provide a 'result specification' in their signature to enforce the type and cardinality of values in their expansion.
+
+```bnf
+result-spec ::= -> tagged-type tagged-cardinality
+```
+
+For example:
+```ion
+(macro concat [(seq sequence...)] -> sequence! /* body */)
+//         result specification --^^^^^^^^^^^^
+```
+
+This feature became less powerful with the removal of types and so was removed for simplicity.
+As this was already optional, restoring it in a later version of Ion would be straightforward.
+
+### Arguments with multiple expressions
+
+While tagged parameters can always accept an arbitrary number of expressions via the `(:values ...)` macro,
+parameters using a tagless encoding do not have that option.
+Without an opcode (a 'tag'), primitive encodings like `uint8` would not have a way to encode a macro invocation.
+
+#### Grouped expressions
+
+We previously addressed this issue by creating an 'expression group' syntax that could be used by both tagged and tagless types.
+Macro parameters would opt into this via `[]` notation in their declaration.
+
+For example:
+```ion
+(macro annotate (annotations [text]*) value) -> any
+//        indicated a    ----^----^
+//        grouped parameter
+```
+In this signature, the `annotations` parameter was a 'grouped' parameter.
+In text, any number of expressions could be passed to `annotations`, but they had to be enclosed in a delimiting `[]` pair.
+
+```ion
+(:annotate ["a2"] a1::true) ⇒ a2::a1::true
+//         ^----^--- This was an expression group, not a list
+```
+
+In binary, baking this into the macro definition meant that no additional bytes needed to be spent at the callsite to communicate
+whether the argument was a single expression or a group of expressions--it was guaranteed to be a group.
+
+However, it was not without drawbacks. In particular:
+* In text, the usage of a delimiting `[]` pair that was not actually an Ion list was potentially confusing to human readers.
+  It also precluded the possibility of passing a single expression because it would be ambiguous whether a `[]` was a list
+  or a group.
+* In binary, the group required one or more bytes to encode even if it was empty.
+* It contributed to an overall sense that parameter declarations were too 'noisy'.
+
+#### Expression Groups
+
+Expression grouping has been removed from parameter declarations.
+Passing an expression group as an argument is now opted into at the callsite.
+
+In text, we have introduced a distinct syntax to indicate an argument expression group:
+```ion
+(:foo (:: 1 2 3))
+//    ^^^------^--- Indicates an expression group
+```
+
+Expression groups are only legal in argument position, and are supported for any parameter with a cardinality other than `exactly-one`.
+
+In binary, we refer to the argument encoding bitmap at the callsite to determine whether an argument has been encoding as a single expression,
+an expression group, or no expression at all.
+
+### Rest parameters
+
+Rest parameter syntax no longer requires explicit opt-in in the macro signature, and the corresponding cardinality modifiers have been removed.
+
+| Modifier | Cardinality                                  |
+|:--------:|----------------------------------------------|
+|   `!`    | exactly-one value                            |
+|   `?`    | zero-or-one value                            |
+|   `+`    | one-or-more values                           |
+|   `*`    | zero-or-more values                          |
+|  `...`   | ~~zero-or-more values, as "rest" arguments~~ |
+|  `...+`  | ~~one-or-more values, as "rest" arguments~~  |
+
+Instead, rest syntax is implicitly permitted for any `zero-or-more` or `one-or-more` parameter in tail position.
+<!--
+```ion
+$ion_encoding::(
+  (macro_table
+    (macro non_empty_list1 (head, tail*) [(%head), (%tail)])
+    (macro non_empty_list2 (items+) [(%items)])
+  )
+)
+
+//          head--v
+(:non_empty_list1 1 2 3 4 5)
+//                  ^^^^^^^--tail
+
+//         items--vvvvvvvvv
+(:non_empty_list2 1 2 3 4 5)
+
+```
+-->
+
+### Simplified macro signatures
+
+In their most explicit form, macro signatures could become visually dense. For example:
+
+```ion
+(macro foo
+  [(bar [flex_uint+]), (baz sequence?), (quux any...)] -> sequence!
+  [bar, baz, quux])
+```
+
+As described prior:
+* [Types have been pared back to encodings](#types)
+* [Result specifications have been removed](#result-specifications)
+* [Grouping is longer part of a parameter's declaration](#arguments-with-multiple-expressions)
+* [Rest syntax is now implicit](#rest-parameters)
+
+Collectively, these changes greatly reduce the number of concepts to communicate in the macro signature.
+
+To eliminate a layer of nesting in the signature, encodings are now written as an annotation on the corresponding parameter.
+If no annotation is present, the encoding defaults to tagged.
+To eliminate the need for delimiting `,`s between declaration elements, the parameter declaration sequence is now an s-expression rather than a list.
+
+Subjectively, these changes make macro signatures simpler to parse for both humans and machines.
+Using today's specification, the example macro definition shown above would instead be written as:
+```ion
+(macro foo
+  (flex_uint::bar+ baz? quux*)
+  [bar, baz, quux])
+```
+
+## Modules
+
+### Tunneled modules removed
+
+## Encoding
+
+### Consolidated binary `struct` encodings
+
+In Ion 1.0, struct field names are always encoded as a `VarUInt` symbol ID.
+Ion 1.1 introduced the ability to encode one's struct field names using a [`FlexSym`](binary/primitives/flex_sym.md),
+an encoding primitive capable of compactly representing either a symbol ID or inline text.
+
+When representing a symbol ID, a `FlexSym` is marginally less compact than a `VarUInt`.
+Experiments showed that naively transcoding struct-heavy Ion 1.0 data to Ion 1.1 with `FlexSym` field names would result in a data size increase of 5-7%.
+
+In order to guarantee that users' data would be the same size after migrating to v1.1,
+we originally preserved the Ion 1.0 struct encoding alongside the new `FlexSym` encoding.
+Applications that wanted the flexibility to write field names as inline symbol text would opt into the somewhat less dense encoding.
+However, this came at the cost of [opcode space](binary/opcodes.md).
+Supporting both encodings meant that structs occupied 32 of the available 256 opcodes (16 per encoding).
+Additionally, it was not easy for a writer to switch encodings in the middle of a struct,
+so implementations were incentivized to always use the more flexible encoding anyway.
+
+The specification now defines a single [unified struct encoding](binary/values/struct.md).
+All structs begin assuming that they will encode field names as symbol IDs.
+If in the course of encoding fields the writer determines that it needs to write a field name as inline text,
+it can emit a sentinel symbol ID indicating that [all subsequent field names will be encoded as `FlexSym`s](binary/values/struct.md#optional-flexsym-field-name-encoding).
+The sentinel field name is a single byte; if subsequent fields will include inline text, the cost of that byte becomes negligible.
+The sentinel field name is symbol ID `$0`; if the writer wishes to encode the actual symbol ID `$0`, it can do so as a `FlexSym`.
+The switch from symbol IDs to `FlexSym`s is one-way.
+
+This arrangement preserves Ion 1.0 density where possible and gives writers the ability to opt into the flexible encoding in the middle of a struct.
+It also freed up 16 opcodes that are now used to represent macro IDs.
+
+### Separate address space for system symbols/macros

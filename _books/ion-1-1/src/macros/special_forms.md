@@ -13,13 +13,6 @@ Since the elements of macro-invocation expressions are themselves expressions, w
 Finally, these special forms are part of the template language itself, and are not addressable outside of TDL;
 the E-expression `(:if_none foo bar baz)` must necessarily refer to some user-defined macro named `if_none`, not to the special form of the same name.
 
-
-> [!TODO]
-> Many of these could be system macros instead of special forms. Being unrepresentable in TDL is not a reason for something
-> to be a special form.
-> Candidates to be moved to system macros are `if_*` and `fail`.
-> Additionally, the system macro `parse_ion` may need to be classified as a special form since it only accepts literals.
-
 ### `if_none`
 
 ```ion

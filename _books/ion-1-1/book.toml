@@ -4,7 +4,7 @@ language = "en"
 multilingual = false
 src = "src"
 title = "The Ion 1.1 Draft Specification"
-default-theme = "light"
+default-theme = "rust"
 
 [output.html.fold]
 # Makes the sections in navigation pane collapsable.
