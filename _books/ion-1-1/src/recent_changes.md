@@ -111,8 +111,10 @@ In text, we have introduced a distinct syntax to indicate an argument expression
 ```
 
 Expression groups are only legal in argument position, and are supported for any parameter with a cardinality other than `exactly-one`.
+Unlike its predecessor, the delimiting `[]`, this new construct is syntactically distinct and introduces no ambiguity.
 
-In binary, we refer to the argument encoding bitmap at the callsite to determine whether an argument has been encoding as a single expression,
+In binary, we refer to the [argument encoding bitmap](binary/e_expressions.md#argument-encoding-bitmap-aeb)
+at the callsite to determine whether an argument has been encoding as a single expression,
 an expression group, or no expression at all.
 
 ### Rest parameters
@@ -189,7 +191,7 @@ Retaining all modules was done via `(retain *)`, but there was not a definedway 
 
 #### The encoding module
 
-The 'encoding environment' has been supplanted by the concept of an 'encoding module'.
+The 'encoding environment' has been supplanted by the concept of an '[encoding module](modules/encoding_module.md)'.
 Like any other module, the encoding module is a `(symbol table, macro table)` pair.
 The available modules map has been removed, and modules are now lexically scoped.
 When an encoding directive defines a module or imports a shared one,
@@ -205,6 +207,13 @@ treating the "available modules" map as a form of stream-local catalog construct
 This capability could be added in the future if a use case presents itself.
 
 ### Intra-module aliasing
+
+Prior versions of the specification provided an `(alias)` operation that could be used within a module.
+This enabled macro authors to rename macros or create shorter bindings for macros that would otherwise require qualified syntax to address.
+In practice, we found that this feature introduced quite a bit of complexity; it has been removed.
+
+Macros exported from a module in scope must be referred to using qualified `module_name::macro_name` syntax.
+Macros can still be aliased on export, just not within the module definition.
 
 ### Tunneled modules removed
 
