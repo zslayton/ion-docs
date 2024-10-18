@@ -165,6 +165,84 @@ Using today's specification, the example macro definition shown above would inst
   [bar, baz, quux])
 ```
 
+### TDL syntax
+
+Originally, TDL defined all s-expressions to be macro invocations and all symbol values to be variable references.
+Symbols and s-expressions that were _not_ macro invocations or symbols could be inserted using a combination of
+the `(literal ...)` and `(make_sexp ...)` operations.
+However, this arrangement introduced a few problems.
+
+Human readers were often confused by the similarity between the variable reference and its surroundings.
+In particular, it was confusing that annotations and field names (which strongly resemble symbols)
+were _not_ variable references, while symbol values _were_.
+
+```ion
+(macro point3d (x y z)
+  {
+    x: x::x,
+    y: y::y,
+    z: z::z,
+  }
+)
+```
+
+We noticed a pattern in which users would prefix their variable names with (e.g. `$`) to make the references more visually distinctive:
+
+```ion
+(macro point3d ($x $y $z)
+  {
+    x: x::$x,
+    y: y::$y,
+    z: z::$z,
+  }
+)
+```
+
+We also found that as templates became more substantive, it became more likely that one would have plain symbol values and s-expressions in the template.
+Lots of test macros written during development (like `point3d` above) were relatively trivial, with the body mostly comprised of variable references.
+However, meatier templates would require several usages of `literal` and `make_sexp`, making them less readable.
+
+Consider this example definition of the `add_macros` macro, which is quite dense to read:
+```ion
+(macro add_macros ($macro_definitions*)
+    (annotate
+        (literal $ion_encoding)
+        (make_sexp [
+            (literal (symbol_table $ion_encoding)),
+            (make_sexp [
+                (literal macro_table),
+                (literal $ion_encoding),
+                $macro_definitions
+            ])
+        ])
+    )
+)
+```
+
+In response to these problems, we:
+1. Redefined the syntax for variable references to be `(%variable_name)`.
+   This made expansions of a variable more visually distinctive while also allowing template authors
+   to use symbol values in the same way they would use annotations or field names.
+2. Redefined the syntax for macro invocations to be `(.macro_name)`.
+   This made it possible for an s-expression could now be a quasi-literal, just like a list or struct.
+
+Together, these changes reduced our definition of `add_macros` to:
+```ion
+(macro add_macros (macro_definitions*)
+    $ion_encoding::(
+        (symbol_table $ion_encoding)
+        (macro_table $ion_encoding (%macro_definitions))
+    )
+)
+```
+
+S-expressions that start with the operator `.` or `%` can be expressed using `values` in a quasi-literal:
+```
+((.values . foo bar baz)) => (.foo bar baz)
+((.values %foo))          => (%foo)
+```
+meaning that we were able to remove the `literal` operation.
+
 ## Modules
 
 A module is a `(symbol table, macro table)` pair.
