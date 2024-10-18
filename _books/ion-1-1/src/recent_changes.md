@@ -45,7 +45,7 @@ primitive-type ::= flex_symbol | flex_string | flex_int | flex_uint | uint8
 ```
 We now refer to these types as 'encodings' to highlight this distinction.
 
-This set of types could be easily restored or expanded in a later version of Ion using existing syntax.
+This set of types/encodings could be easily restored or expanded in a later version of Ion using existing syntax.
 
 ### Result specifications
 
@@ -129,24 +129,7 @@ Rest parameter syntax no longer requires explicit opt-in in the macro signature,
 |  `...+`  | ~~one-or-more values, as "rest" arguments~~  |
 
 Instead, rest syntax is implicitly permitted for any `zero-or-more` or `one-or-more` parameter in tail position.
-<!--
-```ion
-$ion_encoding::(
-  (macro_table
-    (macro non_empty_list1 (head, tail*) [(%head), (%tail)])
-    (macro non_empty_list2 (items+) [(%items)])
-  )
-)
-
-//          head--v
-(:non_empty_list1 1 2 3 4 5)
-//                  ^^^^^^^--tail
-
-//         items--vvvvvvvvv
-(:non_empty_list2 1 2 3 4 5)
-
-```
--->
+As before, rest parameter syntax only exists in text Ion.
 
 ### Simplified macro signatures
 
@@ -212,4 +195,56 @@ The switch from symbol IDs to `FlexSym`s is one-way.
 This arrangement preserves Ion 1.0 density where possible and gives writers the ability to opt into the flexible encoding in the middle of a struct.
 It also freed up 16 opcodes that are now used to represent macro IDs.
 
-### Separate address space for system symbols/macros
+### System address space
+
+TDL introduced a number of keywords that are necessary to define an encoding context.
+While they could be encoded as inline text, it would preferable to have an inexpensive way to encode them.
+In an Ion 1.0-style encoding context, these keywords would be added to the system symbol table as a permanent prefix.
+In Ion 1.1, however, [there are dozens of these keywords](modules/system_module.md#system-symbols)
+and it is likely that many of them will not be referenced in any given stream.
+This makes the cost of storing them in the active symbol table as a permanent prefix excessive;
+user symbols are more likely to require two or more bytes to encode because the most valuable symbol IDs are taken.
+
+Similarly, Ion 1.1 defines a number of system macros that we would like for users to be able to cheaply reference when boostrapping an encoding context,
+but we do not want those macros to occupy valuable address space better spent on user data.
+
+To satisfy the dual goals of A) making these constructs cheaply available when constructing an encoding context
+and B) not occupying valuable address space with constructs the user doesn't need,
+we have made changes to the way the encoding context works.
+
+First: system macros and symbols have been given their own address space.
+
+They are always available and can be referenced in any context.
+In binary, the `0xEE` opcode indicates that a one-byte `FixedUInt` system symbol ID follows.
+The `0xEF` opcode indicates that a one-byte `FixedUInt` system macro ID follows.
+In text, system macros can be accessed by using the syntax `$ion::macro_name`.
+
+Second: following an Ion version marker, the encoding context defaults to the system module.
+This means that, like Ion 1.0, all of the constructs needed to bootstrap a custom encoding context are cheaply available at the outset of a stream.
+Unlike Ion 1.0, the system constructs are not a permanent prefix.
+The user is able to redefine the encoding context, up to and including removing the system macros/symbols.
+
+```ion
+$ion_1_1
+
+// Following an IVM, the encoding module is the system module.
+// This allows a user to, for example, invoke system macros to define macros of their own.
+// System macro `set_macros` expands to an encoding directive that clears the macro
+// table and adds the provided macro definitions.
+(:set_macros
+  (foo (a b c) /*...*/)
+  (bar (x)     /*...*/)
+  (baz ()      /*...*/)
+)
+// Following this encoding directive, there are only 3 macro IDs in use: 0, 1, and 2.
+// 62 more one-byte macro IDs are available.
+
+// Calling `set_macros` also removed the `set_macros` from the macro table.
+// However, we can still invoke it using system macro syntax:
+(:$ion::set_macros
+  (quux (d e) /*...*/)
+  (quuz ()    /*...*/)
+)
+```
+
+The symbol ID `$0` is always available in the active symbol table (as a permanent prefix, if that suits your mental model).
