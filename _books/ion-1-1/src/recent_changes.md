@@ -167,6 +167,14 @@ Using today's specification, the example macro definition shown above would inst
 
 ## Encoding
 
+### Simplified arguments encoding bitmap
+
+Previously, the [arguments encoding bitmap (AEB)](binary/e_expressions.md#argument-encoding-bitmap-aeb) assigned varying numbers of bits
+to each argument according to both its cardinality and its grouping.
+
+Now that [grouping has been removed](#arguments-with-multiple-expressions),
+the AEB simply assigns two bits to any parameter with a cardinality other than `exactly-one`.
+
 ### Consolidated binary `struct` encodings
 
 In Ion 1.0, struct field names are always encoded as a `VarUInt` symbol ID.
@@ -228,13 +236,13 @@ The user is able to redefine the encoding context, up to and including removing 
 $ion_1_1
 
 // Following an IVM, the encoding module is the system module.
-// This allows a user to, for example, invoke system macros to define macros of their own.
-// System macro `set_macros` expands to an encoding directive that clears the macro
-// table and adds the provided macro definitions.
+// This allows a user to, for example, invoke system macros to define macros
+// of their own. System macro `set_macros` expands to an encoding directive
+// that clears the macro table and adds the provided macro definitions.
 (:set_macros
-  (foo (a b c) /*...*/)
-  (bar (x)     /*...*/)
-  (baz ()      /*...*/)
+  (foo (a b c) /*...*/) // 0
+  (bar (x)     /*...*/) // 1
+  (baz ()      /*...*/) // 2
 )
 // Following this encoding directive, there are only 3 macro IDs in use: 0, 1, and 2.
 // 62 more one-byte macro IDs are available.
