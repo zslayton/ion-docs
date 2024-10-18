@@ -163,6 +163,49 @@ Using today's specification, the example macro definition shown above would inst
 
 ## Modules
 
+A module is a `(symbol table, macro table)` pair.
+The definition and handling of modules has been changed, as detailed in the sections below.
+
+### Encoding directives
+
+#### The encoding environment
+
+Earlier versions of the specification included a construct called the _encoding environment_, which was comprised of:
+* A map of names to "available" modules, described below.
+* The current symbol table.
+* The current macro table.
+
+Each encoding directive was a set of one or more operations that would modify the encoding environment.
+An encoding directive could:
+* Define a new module, adding it to the available modules map.
+* Import a shared module, adding it to the available modules.
+* Build up a new symbol table by combining lists of text values with the symbol tables from available modules.
+* Build up a new macro table by combining macro definitions with the macro tables from available modules.
+
+Encoding directives were also responsible for enumerating which modules were still needed.
+They did this by specifying a `retain` clause which listed the ones to keep in memory.
+Modules that were not mentioned in the `retain` clause were removed from the available modules map.
+Retaining all modules was done via `(retain *)`, but there was not a definedway to enumerate modules for eviction.
+
+#### The encoding module
+
+The 'encoding environment' has been supplanted by the concept of an 'encoding module'.
+Like any other module, the encoding module is a `(symbol table, macro table)` pair.
+The available modules map has been removed, and modules are now lexically scoped.
+When an encoding directive defines a module or imports a shared one,
+that module binding is available only within the body of that directive.
+
+Rather than mutating the encoding environment, an encoding directive now defines an encoding module.
+As before, it can build up symbol and macro tables from the modules that in scope.
+
+This approach allows for improved code reuse because the encoding module is now "just another module".
+It also eliminates the complexity of the `retain` system.
+It does sacrifice the ability to define modules that persist over the lifetime of the stream,
+treating the "available modules" map as a form of stream-local catalog construct.
+This capability could be added in the future if a use case presents itself.
+
+### Intra-module aliasing
+
 ### Tunneled modules removed
 
 ## Encoding
