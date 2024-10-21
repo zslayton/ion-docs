@@ -267,7 +267,7 @@ An encoding directive could:
 Encoding directives were also responsible for enumerating which modules were still needed.
 They did this by specifying a `retain` clause which listed the ones to keep in memory.
 Modules that were not mentioned in the `retain` clause were removed from the available modules map.
-Retaining all modules was done via `(retain *)`, but there was not a definedway to enumerate modules for eviction.
+Retaining all modules was done via `(retain *)`, but there was not a defined way to enumerate modules for eviction.
 
 #### The encoding module
 
