@@ -1253,7 +1253,7 @@ hljs.registerLanguage("ion", function () {
         };
         const e_expression_macro_name = {
             className: "e_expression_macro_name",
-            begin: /(?<=\(:)(\w+::)?\w+/,
+            begin: /(?<=\(:)(\w+::)*\w+/,
         };
         const macro_definition_name = {
             className: "macro_definition_name",
@@ -1261,11 +1261,11 @@ hljs.registerLanguage("ion", function () {
         };
         const tdl_macro_invocation_address = {
             className: "tdl_macro_invocation_address",
-            begin: /(?<=\(\.)([a-zA-Z_$]+::)?\d+(?=\s|\))/,
+            begin: /(?<=\(\.)([a-zA-Z_$]+::)*\d+(?=\s|\))/,
         };
         const tdl_macro_invocation_name = {
             className: "tdl_macro_invocation_name",
-            begin: /(?<=\(\.)([a-zA-Z_$]+::)?[a-zA-Z]\w*(?=\s|\))/,
+            begin: /(?<=\(\.)([a-zA-Z_$]+::)*[a-zA-Z]\w*(?=\s|\))/,
         };
 
         // This is the same regex that highlight.js vends for numbers, but it disallows numbers without a digit

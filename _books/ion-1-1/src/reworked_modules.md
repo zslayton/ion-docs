@@ -231,6 +231,92 @@ $ion::
 )
 ```
 
-## e-expressions
+## Qualified macro exports
 
-E-expressions can be qualified to specify which module in the encoding context a name refers to.
+Inside a `(macro_table ...)`, referencing a module name causes that module's macro table to be copied wholesale into the new macro table.
+However, it does _not_ add that module's macro _names_ to be added to the new table's names.
+Instead, the referenced macro name becomes eligible for qualified reference outside the module.
+
+```ion
+(module bar
+    (import bim "com.example.bim" 1)
+    (import bop "com.example.bop" 5)
+    (module boop
+        (macro_table
+            (macro shi (x) /*...*/)
+            (macro shoo (y) /*...*/)))
+    (macro_table
+           boop
+        // ^^^^ Exporting a module's macros assigns them contiguous addresses.
+        // However, this does _not_ add the names `shi` and `shoo` to `bar` directly.
+        // Instead, it makes it possible to refer to `bar::boop::macro_name`.
+        // Here:
+        //   `bar::0` -> `bar::boop::shi`
+        //   `bar::1` -> `bar::boop::shoo`
+        // Invoking the macros from `boop` by name requires qualification
+
+        (macro quux () ...)  // `bar::2`, `bar::quux`
+        (macro quuz () ...)) // `bar::3`, `bar::quuz`
+    (symbol_table
+        bim bop ["a", "b", "c"]))
+```
+
+Names can be added directly to the module via `(export module_name::macro_name [alias?])`.
+
+```ion
+(module bar
+    (module boop
+        (macro_table
+            (macro shi (x) /*...*/)
+            (macro shoo (y) /*...*/)))
+    (macro_table
+        (export boop::shoo)  // `bar::0`, `bar::shoo`
+        (macro quux () ...)  // `bar::1`, `bar::quux`
+        (macro quuz () ...)) // `bar::2`, `bar::quuz`
+    (symbol_table
+        bim bop ["a", "b", "c"]))
+```
+
+Doing this does _not_ cause the nested module to become externally addressable.
+
+```ion
+// Module binding `bar` exists at the top level
+(module waldo
+    (macro_table
+        (macro foo() (.bar::boop::shoo)))) // ERROR: `bar::boop` is not accessible
+```
+
+### `$ion_encoding`
+
+The stream uses the `$ion_encoding` module as its encoding context.
+At the beginning of the stream, `$ion_encoding` is identical to the system module.
+
+```ion
+$ion::
+(module $ion_encoding
+    (module boop
+        (macro_table
+            (macro shi (x) /*...*/)
+            (macro shoo (y) /*...*/)))
+    (macro_table
+        boop
+        (macro foo () /*...*/)))
+)
+// The prior `$ion_encoding` is now shadowed, inaccessible.
+// From here on, the stream will be encoded using the new `$ion_encoding`.
+```
+
+Macros in the `$ion_encoding` module can be referenced in an e-expression without qualification:
+```ion
+(:foo) // OK
+```
+...but macros that were re-exported via `$ion_encoding`'s `(macro_table ...)` are not:
+```ion
+(:shi) // ERROR: no macro named 'shi' in `$ion_encoding`
+```
+Instead, these macros require a qualified syntax:
+```ion
+(:boop::shi) // OK
+```
+
+> Is a leading `$ion_encoding::` legal in e-expressions? I want to say 'no'.
