@@ -125,27 +125,31 @@ All macros within the same `(macro_table)` clause must have unique names.
                                  //        already exists in this table
 ```
 -->
-# The problem
+# Remaining issues
 
 The current module specification has two gaps that we would like to close before finalizing the specification:
-1. [Stream-level modules](#stream-level-modules)
+1. [Top-level module reuse](#top-level-module-reuse)
 2. [Better ways to avoid namespace collisions](#better-ways-to-avoid-namespace-collisions)
 
-### Stream-level modules
-First, it is currently not possible to define or import a shared module and make use of it for the duration of the stream.
+## Top-level module reuse
+It is currently not possible to define or import a shared module and make use of it for the duration of the stream.
 As specified, module definitions and imports always appear within an `$ion_encoding::(...)` directive and go out of scope when the directive ends.
 
 It would be nice to be able to define one or more 'core' sets of macros for a long-lived stream and periodically reset to some set of them,
 reclaiming address space without discarding valuable encoding constructs.
 
-### Better ways to avoid namespace collisions
+## Better ways to avoid namespace collisions
 
 While TDL supports qualified macro references, e-expressions do not.
 This is because the binary encoding relies on the macro table being a flat address space;
 there is no qualified e-expression syntax in binary.
 
 To ensure that all macro names are unambiguous, module authors are currently required to resolve any naming conflicts in the module's `macro_table`.
-However, when the module depends on other modules--especially those maintained by someone else--this can become quite onerous.
+Because e-expressions always invoked a macro from the encoding module's symbol table,
+it is therefore guaranteed that all unqualified macro names referenced in an e-expression are unique and unambiguous.
+
+However, when the module depends on other modules--especially those maintained by someone else--the
+macro table uniqueness constraint can become quite onerous.
 
 ```ion
 $ion_encoding::(
@@ -154,18 +158,20 @@ $ion_encoding::(
     (import mod_b "com.example.b" 4)
     (macro_table
         mod_a
-        mod_b) // conflict?
-    /*...*/
-    ))
+        mod_b // conflict?
+        /*...*/)))
 ```
 In the above example, the author cannot easily know whether `mod_a` and `mod_b` contain any macros whose names conflict.
 If there _is_ a conflict, the only mechanism that exists to resolve it would be to use the `(export ...)` operation to rename one of the conflicting macros.
 However, doing so means that all of the other macros in that module would have to be re-exported individually--no bulk rename/re-export facility exists.
 
-# Supporting stream-level bindings
-## Directive syntax
+# Proposed changes
 
-To address the need for [stream-level module bindings](#stream-level-modules), the specification will support multiple top-level directives.
+* [Directive syntax](#directive-syntax)
+* [Top-level module bindings](#top-level-module-bindings)
+* [Unambiguous macro references](#unambiguous-macro-references)
+
+## Directive syntax
 
 Previously, there was a single encoding directive which defined modules as well as the encoding for the upcoming segment:
 ```ion
@@ -179,7 +185,8 @@ $ion_encoding::(
 // ...new segment begins using the above encoding module...
 ```
 
-This proposal suggests making a more general "directive" syntax in the form:
+To address the need for [top-level module bindings](#top-level-module-bindings), the specification will be updated to support multiple top-level directives.
+To accommodate this, we will introduce a more general "directive" syntax in the form:
 
 ```ion
 $ion::
@@ -191,10 +198,10 @@ $ion::
 
 This allows us to have multiple directive types while preserving the reader's ability to distinguish
 between application values and system data at the top level with a single branch,
-namely: "is it a top-level sexp annotated with `$ion`?
+namely: "is it a top-level sexp annotated with `$ion`"?
 
-It is also legal to group multiple operations into a single directive.
-If the first expression in the s-expression is a name, it's a single form.
+It will also legal to group multiple operations into a single directive.
+If the first expression in the s-expression is a name, it's a single operation.
 If the first expression is an s-expression, it's a sequence of operations.
 
 ```ion
@@ -207,11 +214,34 @@ $ion::
 
 ## Top level module bindings
 
-In TDL, the `(module ...)` and `(import ...)` operations create lexically-scoped module bindings.
-This proposal replaces the original `$ion_encoding::(...)` form with these two operations,
-making it possible for them to appear at the top level.
+This proposal replaces the original `$ion_encoding::(...)` form with three top-level operations:
+1. `(import ...)`
+2. `(module ...)`
+3. `(encoding ...)`
 
-**`$ion::(import ...)`** resolves a `(named, version)` pair in the catalog.
+In TDL, the `(module ...)` and `(import ...)` operations create lexically-scoped module bindings.
+At the top level of a stream, the new binding's lexical scope is _the stream itself_.
+This means that once created, module bindings at this level endure until the file ends or another Ion version marker is encountered.
+
+As with any lexically scoped binding, module names from the top scope are accessible in any nested TDL scope as long as the name is not shadowed.
+This arrangement makes it possible for a writer to reference a module many times over the course of a stream,
+even after the encoding module has been redefined.
+
+```ion
+$ion::
+(module log_levels
+    (symbol_table ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]))
+// ...
+(:append_symbols ["abc123" "def456" "ghi789"])
+// ...
+(:set_symbols log_levels)
+```
+
+Module bindings are not removed/cleared by further directives, though a module name may be shadowed by a new binding.
+
+### `$ion::(import ...)`
+
+Resolves a `(name, version)` pair in the catalog.
 
 ```ion
 $ion::
@@ -219,8 +249,9 @@ $ion::
 ```
 Upon success, it adds the binding `foo` to the stream's map of names to module definitions.
 
+### `$ion::(module ...)`
 
-**`$ion::(module ...)`** which defines a new module and binds a name to it.
+Defines a new module and binds a name to it.
 
 ```ion
 $ion::
@@ -240,44 +271,41 @@ $ion::
         mod_a))
 ```
 
-At the top level of a stream, the new binding's lexical scope is _the stream itself_.
-This means that once created, module bindings at this level endure until the file ends or another Ion version marker is encountered.
-
-Module bindings are not removed/cleared by further directives, though a module name may be shadowed by a new binding.
+### Reserved module names
 
 Two module bindings are automatically available at the outset of every stream:
-1. `$ion`, the system module, which contains macros and symbols defined in the Ion specification
-2. `$ion_encoding`, the encoding module
+1. `$ion`
+2. `$encoding`
 
-> [!WARNING]
-> **Users cannot create a new module named `$ion` or whose name begins with `$ion_`.**
-> These are reserved for the Ion specification.
+`$ion` is the system module. It contains macros and symbols defined in the Ion specification.
 
-As with any lexically scoped binding, module names from the top scope are accessible in any nested TDL scope as long as the name is not shadowed.
+`$encoding` is the encoding module. Its symbol table and macro table are used to encode the stream.
 
-To modify the encoding context, writers will shadow the `$ion_encoding` module:
+> [!IMPORTANT]
+> **Users cannot create a binding whose name begins with `$`.**
+> These are reserved for the system use.
+> ```ion
+> (import $ion /*...*/)      // ERROR
+> (module $foo /*...*/)      // ERROR
+> (import $encoding /*...*/) // ERROR
+> ```
+
+This means that the `$ion` and `$encoding` modules cannot be shadowed.
+
+### `$ion::(encoding ...)`
+
+The module `$encoding` is special in that its definition determines the encoding of data stream that follows.
+To emphasize this, it is defined with its own directive:
 ```ion
 $ion::
-(module $ion_encoding
+(encoding
     (macro_table
         (macro greet () "hello!")))
 ```
 
-> [!TIP]
-> Because users cannot create their own module called `$ion`, the system module can never be shadowed.
-
-This arrangement makes it possible for a writer to reference a module many times over the course of a stream,
-even after the `$ion_encoding` module has been redefined.
-
-```ion
-$ion::
-(module log_levels
-    (symbol_table ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]))
-// ...
-(:append_symbols ["abc123" "def456" "ghi789"])
-// ...
-(:set_symbols log_levels)
-```
+The `encoding` keyword is equivalent to `(module $encoding)` with two important distinctions:
+* It enables the shadowing of a module whose name begins with `$`.
+* It is only valid at the top level. This means that `$encoding` cannot be shadowed at the top, but not at deeper levels of nesting.
 
 # Unambiguous macro references
 
@@ -367,56 +395,45 @@ As before, individual names can be added directly to the module via `(export mod
 
 
 
-## E-expressions
+## E-expression macro resolution
 
-At the beginning of the stream, the `$ion_encoding` module is identical to the system module.
+E-expressions can only invoke macros in two modules: `$ion` and `$encoding`.
+All user macros live in `$encoding`, which means it will be the most heavily referenced.
+
+To streamline the common case, macros in `$encoding` can be referenced in an e-expression without qualification.
+For example, consider this stream:
 
 ```ion
 $ion_1_1
 
-// The following directive defines a new `$ion_encoding` module, shadowing the original.
 $ion::
-(module $ion_encoding
+(encoding
     (module boop
         (macro_table
             (macro shi (x) /*...*/)
             (macro shoo (y) /*...*/)))
     (macro_table
         boop
-        (macro foo () /*...*/)))
-)
-// The prior `$ion_encoding` is now shadowed, inaccessible.
-// From here on, the stream will be encoded using the new `$ion_encoding`.
+        (macro foo () /*...*/))))
 ```
 
-Macros in the `$ion_encoding` module can be referenced in an e-expression without qualification:
+Macro resolution begins in the `$encoding` module; writers do not need to include an `$encoding::` qualification:
 ```ion
 (:foo) // OK
 ```
-...but macros that were re-exported via `$ion_encoding`'s `(macro_table ...)` are not:
-```ion
-(:shi) // ERROR: no macro named 'shi' in `$ion_encoding`
-```
-Instead, these macros require a qualified syntax:
+Qualified macros may also omit the leading `$encoding::`:
 ```ion
 (:boop::shi) // OK
 ```
 
-### Reserved names
-
-> [!WARNING]
-> **It is illegal for users to define a module name which begins with `$ion_` or is exactly `$ion`.**
-
-E-expression macro references almost begin the resolution process in the `$ion_encoding` module;
-however, there is one exception:
-if the outermost module name in a qualified e-expression starts with `$ion`,
-the reader will attempt to resolve the macro name starting in the specified module name.
-
-This allows macros in the system module to be invoked anywhere in the stream:
+When the first module name in a qualified macro name begins with `$`, resolution instead begins in that module.
+This allows system macros to be unambiguously invoked:
 ```ion
-(:$ion::make_string a b c)
+// Resolution begins in `$ion`
+(:$ion::make_string foo bar baz)
 ```
-It also allows users to specify the 'absolute' path to a macro:
+Writers may optionally include the `$encoding` qualification under the same rule:
 ```ion
-(:$ion_encoding::foo::bar)
+// Resolution begins in `$ion`
+(:$encoding::shoo)
 ```
