@@ -200,18 +200,6 @@ This allows us to have multiple directive types while preserving the reader's ab
 between application values and system data at the top level with a single branch,
 namely: "is it a top-level sexp annotated with `$ion`"?
 
-It will also legal to group multiple operations into a single directive.
-If the first expression in the s-expression is a name, it's a single operation.
-If the first expression is an s-expression, it's a sequence of operations.
-
-```ion
-// a directive with multiple operations
-$ion::
-((operation_a /*...*/)
- (operation_b /*...*/)
- (operation_c /*...*/))
-```
-
 ## Top level module bindings
 
 This proposal replaces the original `$ion_encoding::(...)` form with three top-level operations:
@@ -255,16 +243,18 @@ Defines a new module and binds a name to it.
 
 ```ion
 $ion::
+(module mod_a /*...*/)
+
+$ion::
 (module foo
-    (import mod_a) // Import from local catalog
     (import mod_b  // Import from global catalog
             "catalog-key" 1)
     (module mod_c  // Modules can have nested modules
             ...)
     (macro_table
         (macro bar () /*...*/)
-        mod_a
-        mod_b::specific_macro))
+        mod_a // Visible from parent scope
+        (export mod_b::specific_macro)))
     (symbol_table
         mod_c
         ["dog", "cat", "mouse"]
@@ -305,7 +295,7 @@ $ion::
 
 The `encoding` keyword is equivalent to `(module $encoding)` with two important distinctions:
 * It enables the shadowing of a module whose name begins with `$`.
-* It is only valid at the top level. This means that `$encoding` cannot be shadowed at the top, but not at deeper levels of nesting.
+* It is only valid at the top level. This means that `$encoding` can be shadowed at the top, but not at deeper levels of nesting.
 
 # Unambiguous macro references
 
@@ -434,6 +424,6 @@ This allows system macros to be unambiguously invoked:
 ```
 Writers may optionally include the `$encoding` qualification under the same rule:
 ```ion
-// Resolution begins in `$ion`
+// Resolution begins in `$encoding`
 (:$encoding::shoo)
 ```
