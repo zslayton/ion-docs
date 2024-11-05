@@ -427,3 +427,255 @@ Writers may optionally include the `$encoding` qualification under the same rule
 // Resolution begins in `$encoding`
 (:$encoding::shoo)
 ```
+
+## Module internals
+
+Conceptually, each module has:
+* a name
+* an internal-only map of submodules
+  * The only way to create new module bindings within a module is to define a submodule.
+* a map of module exports
+  * A module can re-export any module binding that's in scope, including its own submodules.
+* an exported macro table, which is an insertion-order index map of names/addresses to their corresponding macro definitions
+* a list of the macro, module, and flattened-module entries that appeared in the module definition's `(macro_table ...)` clause
+
+These internals are illustrative, not prescriptive.
+Implementations may structure their data as desired so long as they produce the required behavior.
+
+**Example**
+```ion
+$ion_1_1
+// `$ion` and `$encoding` are implicitly available
+$ion::
+(module a
+    (module b
+        (module c
+            (macro_table
+                (macro bi () /*...*/)))
+        (macro_table
+            (macro foo () /*...*/)
+            (export c::bi)
+            (macro bim () /*...*/)
+            (macro bop () /*...*/)))
+    (module d
+        (macro_table
+            (macro quux () /*...*/))
+            (macro quuz () /*...*/)))
+    (macro_table
+        d::* // Flattening re-export of a sibling module's macros
+        (macro bar () /*...*/)
+        b // Re-exporting a sibling module whose binding is in scope
+        (macro baz () /*...*/))
+```
+
+| Module |  Submodules  | Exported<br/>modules | Macro table                                               |
+|:------:|:------------:|:--------------------:|-----------------------------------------------------------|
+|  `a`   |   `b`, `d`   |         `b`          | `0 => quux`<br/>`1 => quuz`<br/>`2 => bar`<br/>`3 => baz` |
+|  `b`   |     `c`      |     _&lt;empty>_     | `0 => foo`<br/>`1 => bi`<br/>`2 => bim`<br/>`3 => bop`    |
+|  `c`   | _&lt;empty>_ |     _&lt;empty>_     | `0 => bi`                                                 |
+|  `d`   | _&lt;empty>_ |     _&lt;empty>_     | `0 => quux`<br/>`1 => quuz`                               |
+|  `e`   | _&lt;empty>_ |     _&lt;empty>_     | `0 => quuz`<br/>`1 => bar`<br/>`2 => baz`                 |
+
+Things to notice:
+* `a`'s `macro_table` clause...
+    * does a flattening re-export of `d`. `d`'s macros appear in `a`'s macro table, but `d` does _not_ appear in `a`'s exported modules.
+    * re-exports `b`. `a`'s exported macro table does _not_ include any of the macros defined in `b`, but `a`'s exported modules map _does_ include `b`.
+* Each module tracks its submodules and exported modules, but can also refer to other modules that are in scope (e.g. previously defined sibling or top-level modules).
+  This is because module bindings are resolved by recursively consulting the parent scope.
+
+### Notes on competing models
+
+#### Model 1: All modules are "statically linked"
+
+In this model, every module copies its dependencies into its macro table, guaranteeing that it is self-contained.
+This gives each module in the tree a flat macro address space, including the root of the tree: `$encoding`.
+
+In this model, the encoding module (`$encoding`) is used as the encoding context.
+All unqualified macro addresses and macro names in e-expressions are resolved in `$encoding`'s macro table.
+Qualified names/addresses are resolved by consulting the appropriate module.
+
+* Every module's macro table is self-contained. In the `(macro_table)` clause:
+    * Module references (`foo`) re-export all of that module's macros. Referring to those macros requires qualification (`foo::bar`, `foo::7`).
+    * Flattening references (`foo::*`) re-export all of that module's macros _and_ merge their names into the current module, raising an error on name conflicts.
+      Re-exports that have been flattened cannot use qualified references to the original module (`foo::bar` is an error, `foo` is ok).
+* Every module behaves the same, including the encoding module.
+* It is not possible to know what module addresses macros will be assigned by looking at the `macro_table` clause alone. For example:
+  ```ion
+  (module mod_a
+      (macro_table             // Local macro address
+          (macro foo () ...)   // mod_a::0
+          (macro bar () ...)   // mod_a::1
+           mod_b               // addresses 2 through ??
+          (macro baz () ...))) // ??
+  ```
+* If two modules re-export the same third module, the third module's macros will occupy extra address space.
+    ```ion
+  (module mod_a
+      (macro_table             // Local macro address
+          (macro foo () ...)   // mod_a::0
+          (macro bar () ...)   // mod_a::1
+          (macro baz () ...))) // ??
+  (module mob_b (macro_table mod_a))
+  (module mob_c (macro_table mod_a))
+  $ion::
+  (encoding (macro_table mod_b mod_c))
+
+  // Macro table
+  // 0: mod_b::mod_a::foo (aka mod_a::foo)
+  // 1: mod_b::mod_a::bar (aka mod_a::bar)
+  // 2: mod_b::mod_a::baz (aka mod_a::baz)
+  // 3: mod_c::mod_a::foo (aka mod_a::foo)
+  // 4: mod_c::mod_a::bar (aka mod_a::bar)
+  // 5: mod_c::mod_a::baz (aka mod_a::baz)
+  ```
+
+#### Model 2: Modules are "dynamically linked"
+
+> A note on terminology: typically we say "macro table" to refer to the joint data structure that allows for lookups both
+> by address and by name. This section uses the term 'macro array' to refer to the macro-by-address half of a macro table.
+
+In this model, `$ion::(encoding ...)` performs two functions:
+1. As before, it defines the `$encoding` module.
+2. It constructs a consolidated 'global' macro array.
+
+In an e-expression:
+* Qualified names and addresses are resolved using the appropriate module.
+* Unqualified names are resolved using `$encoding`.
+* The global macro array is used to resolve unqualified addresses.
+
+When the reader compiles a module, it takes note of any non-flattening module references that appear in the module's `(macro_table ...)` clause.
+Specifically, it records the number of contiguous macros that appear before it. For example:
+
+```ion
+(module mod_a
+    (macro_table
+        (macro foo ...)
+        (macro bar ...)
+        (macro baz ...)))
+// ^^^ contains no module references
+
+(module mod_b
+    (macro_table
+        (macro quux ...)
+        (macro quuz ...)))
+// ^^^ contains no module references
+
+(module_c
+    (macro_table
+        (macro bi ...)
+        mod_b::* // Flattening reference, counts as 2 macros
+        (macro bim ...)
+        mod_a    // Reference preceded by 4 contiguous macros
+))
+```
+
+As the reader traverses the body of the `$ion::encoding()` directive,
+it maintains a record of which module instances have already been copied into the global macro array.
+
+The reader begins by processing the `$ion::(encoding ...)` directive's `macro_table` clause.
+For each item encountered:
+* **If that item is a macro definition or `(export)`,** the macro reference is added to the end of the encoding context's macro table.
+* **If that item is a flattening re-export,** each macro in the referenced module is added to the end of the encoding context's macro table.
+
+
+When constructing the encoding context, the reader reads the `$encoding` directive's macro_table,
+walking the module reference tree in a depth-first search.
+For each item encountered:
+* **If that item is a macro definition or `(export)`,** the macro reference is added to the end of the encoding context's macro table.
+* **If that item is a flattening re-export,** each macro in the referenced module is added to the end of the encoding context's macro table.
+
+
+
+The global macro array holds exactly one copy of the macro array from each module transitively exported `$encoding`.
+
+
+
+
+
+As a module constructs its macro table:
+* Macro definitions and `(export)` statements append a macro to the end of the table.
+* Flattening re-exports copy the referenced modules' macros to the end of the table.
+* Non-flattening macro references do not modify the table; instead, the position of the reference within the `(macro_table ...)` is noted.
+
+When constructing the encoding context, the reader reads the `$encoding` directive's macro_table,
+walking the module reference tree in a depth-first search.
+For each item encountered:
+* **If that item is a macro definition or `(export)`,** the macro reference is added to the end of the encoding context's macro table.
+* **If that item is a flattening re-export,** each macro in the referenced module is added to the end of the encoding context's macro table.
+
+* A module's macro table contains only its own macro definitions.
+  It can refer to other modules' macro tables, but does not copy their contents without explicit opt-in via a flattening re-export.
+*
+
+### Constructing the encoding context
+
+The _encoding context_ is a `(symbol table, macro table)` pair used to encode the data stream.
+
+The context's symbol table is the symbol table found in `$encoding`.
+
+To keep the binary encoding compact, the encoding context uses a flat address space for its macros.
+This allows any macro to be identified by a single integer.
+
+Because symbol tables are already flat (they do )
+
+When the `$encoding` module is constructed, it visits each expression in its `(macro_table)`
+
+
+This pair is constructed by  walking the tree of modules formed by the `$encoding` module.
+
+The symbol table is copied wholesale from the `$encoding` module.
+
+The `$ion::(encoding ...)` directive defines the `$encoding` module, the root of the module tree that will be used to encode the data stream.
+
+The symbol table is copied wholesale from the `$encoding` module.
+
+
+
+
+
+It is constructed by walking the module body of an `$ion::(encoding ...)` directive and recursively flatten
+
+
+### Address allocation
+
+All modules have a macro table
+
+Address allocation begins in the `(macro_table)` clause of the `encoding` directive.
+
+For each item in the `macro_table`:
+* **If it is a macro,** it receives the next available address.
+* **If it is an `(export)`,** it receives the next available address.
+* **If it is a module binding...**
+  * **...and that module has not yet been added to the encoding context,** that module binding becomes publicly addressable.
+    Its macros are assigned the next contiguous block of available addresses, and that address range is stored in the `Module`'s `addresses` field.
+  * **...and that module has already been added to the encoding context,** then it already has addresses.
+* **If it is a flattening re-export (`module_name::*`),** then all of the macros in `module_name` are added to the encoding context and
+  assigned a contiguous block of fields.
+## Examples
+
+```ion
+$ion::
+(module a
+    (module b
+        (macro_table
+            (macro foo () /*...*/)
+            (macro bim () /*...*/)
+            (macro bop () /*...*/)))
+    (macro_table
+        (macro bar () /*...*/)
+        (macro baz () /*...*/))
+
+$ion::
+(encoding
+    (macro_table
+        (macro quux () /*...*/)
+        a::b
+        (macro quuz () /*...*/)))
+```
+
+Macro table
+```ion
+quux
+a::b::bim
+a::b::bop
+```
