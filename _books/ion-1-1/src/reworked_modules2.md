@@ -36,7 +36,7 @@ Here are some examples of how unqualified addresses are resolved:
 
 | Encoding modules | Unqualified address | Qualified name   |
 |:----------------:|:-------------------:|------------------|
-|     `A B C`      |         `1`         | `B::1`           |
+|     `A B C`      |         `1`         | `A::1`           |
 |                  |         `3`         | `B::quux`        |
 |                  |         `5`         | `C::bi`          |
 |                  |         `9`         | `C::quux`        |
@@ -166,7 +166,7 @@ In e-expressions, unqualified macro name references are always resolved in the d
 (:foo 1 2 3)
 
 //...is the same as this:
-(_::foo 1 2 3)
+(:_::foo 1 2 3)
 ```
 
 > ZS: There's room to design this bit below further.
